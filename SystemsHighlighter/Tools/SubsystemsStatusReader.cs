@@ -207,6 +207,8 @@ namespace SystemsHighlighter.Tools
                         !string.IsNullOrWhiteSpace(externalPriority) ? externalPriority :
                         currentPriorityForBlock;
 
+                    bool lineTestsCompleted = colTestsCompleted > 0 && ParseBool(ws.Cell(row, colTestsCompleted));
+
                     if (!result.ContainsKey(normLineName))
                     {
                         result[normLineName] = new LineStatus
@@ -216,7 +218,7 @@ namespace SystemsHighlighter.Tools
                             Priority = linePriority,
                             WeldingPercent = currentWeldingPercent,
                             NdtPercent = currentNdtPercent,
-                            TestsCompleted = currentTestsCompleted
+                            TestsCompleted = currentTestsCompleted == true || lineTestsCompleted == true ? true : false
                         };
                     }
                     // Если одна и та же линия встречается несколько раз — берём первую.
@@ -410,7 +412,7 @@ namespace SystemsHighlighter.Tools
 
             if (text == "да" || text == "yes" || text == "y" ||
                 text == "completed" || text == "завершены" ||
-                text == "true" || text == "1" || text.Contains("принят"))
+                text == "true" || text == "1" || text.Contains("принят") && !text.Contains("не"))
                 return true;
 
             if (bool.TryParse(text, out bool b))
