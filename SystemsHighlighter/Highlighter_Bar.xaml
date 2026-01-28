@@ -643,13 +643,63 @@ VerticalAlignment="Center"/>
                                 </Grid>
 
 
-                                <!-- Кнопка отчёта, как была -->
+                                <!-- Кнопка отчёта -->
                                 <Button Content="Создать отчёт"
                         Command="{Binding CreateReportSubsystemsStatus}"
                         HorizontalAlignment="Stretch"
                         Margin="0,12,0,0"
                         Height="34"
                         FontWeight="Normal"/>
+
+                                <!-- Цветовая шкала готовности (0% → 50% → 100%) -->
+                                <StackPanel Margin="10,10,10,10">
+                                    <TextBlock Text="Шкала готовности" FontWeight="Bold" Margin="0,0,0,4"/>
+
+                                    <!-- Сам градиент -->
+                                    <Border Height="14"
+                                            CornerRadius="3"
+                                            BorderBrush="#888"
+                                            BorderThickness="1">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                <!-- 0% -->
+                                                <GradientStop Color="#E53935" Offset="0.0"/>
+                                                <!-- 50% -->
+                                                <GradientStop Color="#FDD835" Offset="0.5"/>
+                                                <!-- 100% -->
+                                                <GradientStop Color="#43A047" Offset="1.0"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                    </Border>
+
+                                    <!-- Подписи снизу -->
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0"
+                                                   Text="0%"
+                                                   HorizontalAlignment="Left"
+                                                   FontSize="11"
+                                                   Foreground="#444"/>
+
+                                        <TextBlock Grid.Column="1"
+                                                   Text="50%"
+                                                   HorizontalAlignment="Center"
+                                                   FontSize="11"
+                                                   Foreground="#444"/>
+
+                                        <TextBlock Grid.Column="2"
+                                                   Text="100%"
+                                                   HorizontalAlignment="Right"
+                                                   FontSize="11"
+                                                   Foreground="#444"/>
+                                    </Grid>
+                                </StackPanel>
+
                             </StackPanel>
                         </GroupBox>
                     </TabItem.Content>

@@ -3407,9 +3407,6 @@ namespace SystemsHighlighter
         /// <summary>
         /// Собственно формирование Excel / PDF отчёта по подсистемам на основе SubsystemsStatusMapper.
         /// </summary>
-        /// <summary>
-        /// Собственно формирование Excel / PDF отчёта по подсистемам на основе SubsystemsStatusMapper.
-        /// </summary>
         private async Task PerformCreateReportSubsystemsStatusAsync(
             SubsystemsStatusMapper mapper,
             Dictionary<string, SubsystemsStatusReader.LineStatus> lineStatuses)
@@ -3573,7 +3570,18 @@ namespace SystemsHighlighter
                         token.ThrowIfCancellationRequested();
 
                         // Базовые поля
-                        ws.Cell(rowIdx, 1).Value = s.SystemName ?? string.Empty;
+
+                        // ФОКУС
+                        string sysname = "";
+                        if (s.SystemName.Contains("01-"))
+                        {
+                            var parts = s.SubsystemName.Split('-');
+                            sysname = parts.Count() > 1 ? "01-" + parts[1] : s.SystemName;
+
+                            //MessageBox.Show($"Поменял systemName ({s.SystemName}) для подсистемы {s.SubsystemName}");
+                        }
+
+                        ws.Cell(rowIdx, 1).Value = sysname != "" ? sysname : s.SystemName;
                         ws.Cell(rowIdx, 2).Value = s.SubsystemName ?? string.Empty;
 
                         ws.Cell(rowIdx, 3).Value = s.PrioritiesText ?? string.Empty;
@@ -3690,9 +3698,19 @@ namespace SystemsHighlighter
 
                             string readinessText = readinessPercent.ToString("0.0", inv);
 
+                            // ФОКУС
+                            string sysname = "";
+                            if (s.SystemName.Contains("01-"))
+                            {
+                                var parts = s.SubsystemName.Split('-');
+                                sysname = parts.Count() > 1 ? "01-" + parts[1] : s.SystemName;
+
+                                //MessageBox.Show($"Поменял systemName ({s.SystemName}) для подсистемы {s.SubsystemName}");
+                            }
+
                             rows.Add(new[]
                             {
-                        s.SystemName ?? string.Empty,
+                        sysname != "" ? sysname : s.SystemName,
                         s.SubsystemName ?? string.Empty,
                         s.PrioritiesText ?? string.Empty,
                         $"{totalTp}/{acceptedTp}",

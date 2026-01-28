@@ -684,6 +684,14 @@ namespace SystemsHighlighter.Tools
 
                         if (!index.TryGetValue(normName, out var entry))
                         {
+                            //if (systemName.Contains("01-"))
+                            //{
+                            //    var parts = subsystem.Name.Split('-');
+                            //    systemName = parts.Count() > 1 ? "01-" + parts[1] : systemName;
+
+                            //    //MessageBox.Show($"Поменял systemName ({systemName}) для подсистемы {subsystem.Name}");
+                            //}
+
                             entry = new LineIndexEntry
                             {
                                 SystemName = systemName
