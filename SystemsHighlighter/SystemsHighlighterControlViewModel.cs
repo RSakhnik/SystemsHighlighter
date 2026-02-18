@@ -3334,7 +3334,7 @@ namespace SystemsHighlighter
         }
 
         /// <summary>
-        /// Команда на создание отчёта по подсистемам (Excel / PDF).
+        /// Команда на создание отчёта по подсистемам (Excel / PDF) + отдельная страница/лист по системам.
         /// </summary>
         private async void PerformCreateReportSubsystemsStatus()
         {
@@ -3343,18 +3343,6 @@ namespace SystemsHighlighter
                 MessageBox.Show("Сначала загрузите данные в первой вкладке!");
                 return;
             }
-
-            //var statusReader = new SubsystemsStatusReader(_filePath + "Highlighter\\");
-            //var lineStatuses = statusReader.ReadLineStatuses();
-
-            //if (lineStatuses == null || lineStatuses.Count == 0)
-            //{
-            //    MessageBox.Show("Нет данных по линиям для формирования отчёта по подсистемам.", "Ошибка",
-            //        MessageBoxButton.OK, MessageBoxImage.Error);
-            //    return;
-            //}
-
-            //var mapper = new SubsystemsStatusMapper(Systems);
 
             var reader = new SubsystemsStatusReader(_filePath + "Highlighter\\");
 
@@ -3365,47 +3353,15 @@ namespace SystemsHighlighter
             var subsystemToLines = reader.ReadSubsystemsStructureFromLines();
 
             var mapper = new SubsystemsStatusMapper(Systems);
-
             var newMapper = mapper.BuildRemappedMapperFromLineMapping(subsystemToLines);
 
             await PerformCreateReportSubsystemsStatusAsync(newMapper, lineStatuses);
         }
 
         /// <summary>
-        /// Отладочный метод: случайные N линий из исходных данных.
-        /// </summary>
-        public static string GetRandomLinesSummary(
-            Dictionary<string, SubsystemsStatusReader.LineStatus> data,
-            int count = 10)
-        {
-            if (data == null || data.Count == 0)
-                return "Нет данных по линиям.";
-
-            var rnd = new Random();
-            var lines = data.Values.ToList();
-
-            int take = Math.Min(count, lines.Count);
-
-            var selected = lines.OrderBy(x => rnd.Next()).Take(take).ToList();
-
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Случайные {take} линий:");
-
-            foreach (var line in selected)
-            {
-                sb.AppendLine(
-                    $"{line.LineName} | TP: {line.TestPackageName} | " +
-                    $"Приоритет: {line.Priority} | " +
-                    $"Сварка: {line.WeldingPercent:0.#}% | " +
-                    $"НК: {line.NdtPercent:0.#}% | "
-                );
-            }
-
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// Собственно формирование Excel / PDF отчёта по подсистемам на основе SubsystemsStatusMapper.
+        /// Формирование Excel / PDF отчёта:
+        /// 1) Лист/страница "Системы" (агрегация по подсистемам, средние % взвешены по числу линий)
+        /// 2) Лист/страница "Подсистемы"
         /// </summary>
         private async Task PerformCreateReportSubsystemsStatusAsync(
             SubsystemsStatusMapper mapper,
@@ -3425,7 +3381,6 @@ namespace SystemsHighlighter
                 return;
             }
 
-            // 1) Диалог выбора файла — до запуска фоновой задачи
             var sfd = new SaveFileDialog
             {
                 Title = "Сохранить отчёт по подсистемам",
@@ -3435,16 +3390,12 @@ namespace SystemsHighlighter
             if (sfd.ShowDialog() != true)
                 return;
 
-            // 2) Окно прогресса
             var dlg = new ProgressDialog { Owner = Application.Current.MainWindow };
             dlg.SetIndeterminate("Подготовка данных...");
             dlg.Show();
 
             IProgress<ReportProgress> progress =
-                new System.Progress<ReportProgress>(p =>
-                {
-                    dlg.SetProgress(p.Phase, p.Current, p.Total);
-                });
+                new System.Progress<ReportProgress>(p => dlg.SetProgress(p.Phase, p.Current, p.Total));
 
             try
             {
@@ -3453,6 +3404,12 @@ namespace SystemsHighlighter
                     var token = dlg.Token;
                     token.ThrowIfCancellationRequested();
 
+                    var inv = CultureInfo.InvariantCulture;
+                    const string NoLinesText = "Линий из этой подсистемы\nнет в шаблоне";
+
+                    // =========================
+                    // Стадия 1: агрегируем по подсистемам
+                    // =========================
                     progress.Report(new ReportProgress
                     {
                         Phase = "Агрегация данных по подсистемам...",
@@ -3460,35 +3417,39 @@ namespace SystemsHighlighter
                         Total = 0
                     });
 
-                    // --- Стадия 1: агрегируем по подсистемам через SubsystemsStatusMapper ---
                     var subsystemsData = mapper.BuildSubsystemStatuses(lineStatuses);
 
-                    // Плоский список сводок, чтобы удобнее и для Excel, и для PDF
                     var flat = new List<SubsystemsStatusMapper.SubsystemStatusSummary>();
                     foreach (var sysKv in subsystemsData)
-                    {
                         foreach (var subsKv in sysKv.Value)
                             flat.Add(subsKv.Value);
-                    }
 
                     if (flat.Count == 0)
-                    {
                         throw new InvalidOperationException("Не удалось собрать данные по подсистемам (пустой результат).");
+
+                    // -------------------------
+                    // Локальные хелперы
+                    // -------------------------
+
+                    string DisplaySystemName(SubsystemsStatusMapper.SubsystemStatusSummary s)
+                    {
+                        // Твой "ФОКУС", но без сюрпризов
+                        var sys = s.SystemName ?? "";
+                        if (!string.IsNullOrWhiteSpace(sys) && sys.Contains("01-"))
+                        {
+                            var parts = (s.SubsystemName ?? "").Split('-');
+                            var sysname = parts.Length > 1 ? "01-" + parts[1] : sys;
+                            return string.IsNullOrWhiteSpace(sysname) ? sys : sysname;
+                        }
+                        return sys;
                     }
 
-                    // Локальный хелпер: посчитать по подсистеме:
-                    // - всего линий
-                    // - принято линий
-                    // - всего тест-пакетов
-                    // - принято тест-пакетов
                     (int totalLines, int acceptedLines, int totalTp, int acceptedTp) ComputeSubsystemStats(
                         string systemName,
                         string subsystemName)
                     {
                         int totalLines = 0;
                         int acceptedLines = 0;
-                        int totalTp = 0;
-                        int acceptedTp = 0;
 
                         if (string.IsNullOrWhiteSpace(systemName) || string.IsNullOrWhiteSpace(subsystemName))
                             return (0, 0, 0, 0);
@@ -3523,7 +3484,6 @@ namespace SystemsHighlighter
                             if (!string.IsNullOrWhiteSpace(ls.TestPackageName))
                             {
                                 tpTotalSet.Add(ls.TestPackageName);
-
                                 if (ls.TestsCompleted)
                                     tpAcceptedSet.Add(ls.TestPackageName);
                             }
@@ -3532,125 +3492,235 @@ namespace SystemsHighlighter
                                 acceptedLines++;
                         }
 
-                        totalTp = tpTotalSet.Count;
-                        acceptedTp = tpAcceptedSet.Count;
-
+                        int totalTp = tpTotalSet.Count;
+                        int acceptedTp = tpAcceptedSet.Count;
                         return (totalLines, acceptedLines, totalTp, acceptedTp);
                     }
 
-                    // --- Стадия 2: формирование Excel ---
+                    // -------------------------
+                    // Подготовка строк подсистем
+                    // -------------------------
+                    var subsRows = new List<SubsystemRow>(flat.Count);
+
+                    // -------------------------
+                    // Агрегация по системам (ВЗВЕШЕННЫЕ средние по кол-ву линий)
+                    // -------------------------
+                    var systemsAgg = new Dictionary<string, SystemAgg>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var s in flat.OrderBy(x => x.SystemName).ThenBy(x => x.SubsystemName))
+                    {
+                        token.ThrowIfCancellationRequested();
+
+                        var (totalLines, acceptedLines, totalTp, acceptedTp) =
+                            ComputeSubsystemStats(s.SystemName, s.SubsystemName);
+
+                        double readinessPercent = totalLines > 0 ? 100.0 * acceptedLines / totalLines : 0.0;
+
+                        string sysDisplay = DisplaySystemName(s);
+
+                        subsRows.Add(new SubsystemRow
+                        {
+                            SystemDisplay = sysDisplay,
+                            Subsystem = s.SubsystemName ?? string.Empty,
+                            Priorities = s.PrioritiesText ?? string.Empty,
+                            TotalTp = totalTp,
+                            AcceptedTp = acceptedTp,
+                            AvgWeld = s.AvgWeldingPercent,
+                            AvgNdt = s.AvgNdtPercent,
+                            TotalLines = totalLines,
+                            AcceptedLines = acceptedLines,
+                            ReadinessPercent = readinessPercent
+                        });
+
+                        // Ключ агрегации: используем отображаемое имя, чтобы "ФОКУС" не раздваивал систему
+                        var key = sysDisplay ?? "";
+                        if (string.IsNullOrWhiteSpace(key))
+                            key = s.SystemName ?? "";
+
+                        if (!systemsAgg.TryGetValue(key, out var agg))
+                        {
+                            agg = new SystemAgg { SystemName = key };
+                            systemsAgg[key] = agg;
+                        }
+
+                        agg.SubsystemsCount++;
+
+                        agg.TotalLines += totalLines;
+                        agg.AcceptedLines += acceptedLines;
+                        agg.TotalTp += totalTp;
+                        agg.AcceptedTp += acceptedTp;
+
+                        // Взвешивание по числу линий
+                        if (totalLines > 0)
+                        {
+                            agg.WeldWeightedSum += s.AvgWeldingPercent * totalLines;
+                            agg.NdtWeightedSum += s.AvgNdtPercent * totalLines;
+                        }
+                    }
+
+                    var systemsRows = systemsAgg.Values
+                        .OrderBy(x => x.SystemName, StringComparer.OrdinalIgnoreCase)
+                        .Select(a => new SystemRow
+                        {
+                            System = a.SystemName,
+                            SubsystemsCount = a.SubsystemsCount,
+                            TotalLines = a.TotalLines,
+                            AcceptedLines = a.AcceptedLines,
+                            TotalTp = a.TotalTp,
+                            AcceptedTp = a.AcceptedTp,
+                            AvgWeld = a.TotalLines > 0 ? a.WeldWeightedSum / a.TotalLines : 0.0,
+                            AvgNdt = a.TotalLines > 0 ? a.NdtWeightedSum / a.TotalLines : 0.0,
+                            Readiness = a.TotalLines > 0 ? 100.0 * a.AcceptedLines / a.TotalLines : 0.0
+                        })
+                        .ToList();
+
+                    // =========================
+                    // Стадия 2: Excel
+                    // =========================
                     progress.Report(new ReportProgress
                     {
                         Phase = "Формирование Excel...",
                         Current = 0,
-                        Total = flat.Count
+                        Total = subsRows.Count + systemsRows.Count
                     });
 
                     var wb = new XLWorkbook();
+
+                    // ---------- Лист "Системы" ----------
+                    var wsSys = wb.Worksheets.Add("Системы");
+
+                    wsSys.Cell(1, 1).Value = "Система";
+                    wsSys.Cell(1, 2).Value = "Подсистем (всего)";
+                    wsSys.Cell(1, 3).Value = "Тест-пакеты (всего/принято)";
+                    wsSys.Cell(1, 4).Value = "Линии (всего/принято)";
+                    wsSys.Cell(1, 5).Value = "Средняя готовность по сварке, % (взвеш.)";
+                    wsSys.Cell(1, 6).Value = "Средняя готовность по НК, % (взвеш.)";
+                    wsSys.Cell(1, 7).Value = "% готовности системы";
+
+                    int rSys = 2;
+                    int current = 0;
+
+                    foreach (var sys in systemsRows)
+                    {
+                        token.ThrowIfCancellationRequested();
+
+                        wsSys.Cell(rSys, 1).Value = sys.System;
+                        wsSys.Cell(rSys, 2).Value = sys.SubsystemsCount;
+                        wsSys.Cell(rSys, 3).Value = $"{sys.TotalTp}/{sys.AcceptedTp}";
+                        wsSys.Cell(rSys, 4).Value = $"{sys.TotalLines}/{sys.AcceptedLines}";
+                        wsSys.Cell(rSys, 5).Value = sys.AvgWeld;
+                        wsSys.Cell(rSys, 6).Value = sys.AvgNdt;
+                        wsSys.Cell(rSys, 7).Value = sys.Readiness;
+
+                        rSys++;
+                        current++;
+                        if ((current & 31) == 0)
+                        {
+                            progress.Report(new ReportProgress
+                            {
+                                Phase = "Формирование Excel...",
+                                Current = current,
+                                Total = subsRows.Count + systemsRows.Count
+                            });
+                        }
+                    }
+
+                    // table имеет смысл, только если есть хотя бы 1 строка данных
+                    int lastSysRow = rSys - 1;
+                    if (lastSysRow >= 2)
+                    {
+                        var rngSys = wsSys.Range(1, 1, lastSysRow, 7);
+                        var tableSys = rngSys.CreateTable();
+                        tableSys.Theme = XLTableTheme.TableStyleLight9;
+
+                        wsSys.Column(5).Style.NumberFormat.Format = "#,##0.0";
+                        wsSys.Column(6).Style.NumberFormat.Format = "#,##0.0";
+                        wsSys.Column(7).Style.NumberFormat.Format = "#,##0.0";
+
+                        wsSys.SheetView.FreezeRows(1);
+                        wsSys.Columns(1, 7).AdjustToContents();
+                    }
+                    else
+                    {
+                        wsSys.SheetView.FreezeRows(1);
+                        wsSys.Columns(1, 7).AdjustToContents();
+                    }
+
+                    // ---------- Лист "Подсистемы" ----------
                     var ws = wb.Worksheets.Add("Подсистемы");
 
-                    // Заголовки
                     ws.Cell(1, 1).Value = "Система";
                     ws.Cell(1, 2).Value = "Подсистема";
                     ws.Cell(1, 3).Value = "Приоритеты";
                     ws.Cell(1, 4).Value = "Тест-пакеты (всего/принято)";
                     ws.Cell(1, 5).Value = "Средняя готовность по сварке, %";
                     ws.Cell(1, 6).Value = "Средняя готовность по НК, %";
-                    ws.Cell(1, 7).Value = "Кол-во линий в подсистеме (всего/принято)";
+                    ws.Cell(1, 7).Value = "Кол-во линий (всего/принято)";
                     ws.Cell(1, 8).Value = "% готовности подсистемы";
 
                     int rowIdx = 2;
-                    int current = 0;
-                    var inv = CultureInfo.InvariantCulture;
 
-                    const string NoLinesText = "Линий из этой подсистемы\nнет в шаблоне";
-
-                    foreach (var s in flat.OrderBy(x => x.SystemName).ThenBy(x => x.SubsystemName))
+                    foreach (var s in subsRows.OrderBy(x => x.SystemDisplay).ThenBy(x => x.Subsystem))
                     {
                         token.ThrowIfCancellationRequested();
 
-                        // Базовые поля
+                        ws.Cell(rowIdx, 1).Value = s.SystemDisplay;
+                        ws.Cell(rowIdx, 2).Value = s.Subsystem;
+                        ws.Cell(rowIdx, 3).Value = s.Priorities;
 
-                        // ФОКУС
-                        string sysname = "";
-                        if (s.SystemName.Contains("01-"))
-                        {
-                            var parts = s.SubsystemName.Split('-');
-                            sysname = parts.Count() > 1 ? "01-" + parts[1] : s.SystemName;
+                        ws.Cell(rowIdx, 4).Value = $"{s.TotalTp}/{s.AcceptedTp}";
+                        ws.Cell(rowIdx, 5).Value = s.AvgWeld;
+                        ws.Cell(rowIdx, 6).Value = s.AvgNdt;
 
-                            //MessageBox.Show($"Поменял systemName ({s.SystemName}) для подсистемы {s.SubsystemName}");
-                        }
-
-                        ws.Cell(rowIdx, 1).Value = sysname != "" ? sysname : s.SystemName;
-                        ws.Cell(rowIdx, 2).Value = s.SubsystemName ?? string.Empty;
-
-                        ws.Cell(rowIdx, 3).Value = s.PrioritiesText ?? string.Empty;
-
-                        // Считаем статистику по линиям и тест-пакетам
-                        var (totalLines, acceptedLines, totalTp, acceptedTp) =
-                            ComputeSubsystemStats(s.SystemName, s.SubsystemName);
-
-                        // Тест-пакеты: всего/принято
-                        ws.Cell(rowIdx, 4).Value = $"{totalTp}/{acceptedTp}";
-
-                        // Средние проценты (как и раньше)
-                        ws.Cell(rowIdx, 5).Value = s.AvgWeldingPercent;
-                        ws.Cell(rowIdx, 6).Value = s.AvgNdtPercent;
-
-                        // Кол-во линий: всего/принято
                         var cell7 = ws.Cell(rowIdx, 7);
-                        if (totalLines == 0)
+                        if (s.TotalLines == 0)
                         {
                             cell7.Value = NoLinesText;
                             cell7.Style.Alignment.WrapText = true;
                         }
                         else
                         {
-                            cell7.Value = $"{totalLines}/{acceptedLines}";
+                            cell7.Value = $"{s.TotalLines}/{s.AcceptedLines}";
                         }
 
-                        // % готовности подсистемы = принято_линий / всего_линий * 100
-                        double readinessPercent = 0.0;
-                        if (totalLines > 0)
-                            readinessPercent = 100.0 * acceptedLines / totalLines;
-
-                        ws.Cell(rowIdx, 8).Value = readinessPercent;
+                        ws.Cell(rowIdx, 8).Value = s.ReadinessPercent;
 
                         rowIdx++;
                         current++;
-                        if ((current & 31) == 0 || current == flat.Count)
+                        if ((current & 31) == 0 || current == subsRows.Count + systemsRows.Count)
                         {
                             progress.Report(new ReportProgress
                             {
                                 Phase = "Формирование Excel...",
                                 Current = current,
-                                Total = flat.Count
+                                Total = subsRows.Count + systemsRows.Count
                             });
                         }
                     }
 
-                    // --- Стадия 3: оформление Excel ---
-                    progress.Report(new ReportProgress
-                    {
-                        Phase = "Оформление Excel...",
-                        Current = 0,
-                        Total = 0
-                    });
-
                     int lastDataRow = rowIdx - 1;
-                    var rng = ws.Range(1, 1, lastDataRow, 8);
-                    var table = rng.CreateTable();
-                    table.Theme = XLTableTheme.TableStyleLight9;
+                    if (lastDataRow >= 2)
+                    {
+                        var rng = ws.Range(1, 1, lastDataRow, 8);
+                        var table = rng.CreateTable();
+                        table.Theme = XLTableTheme.TableStyleLight9;
 
-                    // Форматы числовых колонок
-                    ws.Column(5).Style.NumberFormat.Format = "#,##0.0"; // сварка
-                    ws.Column(6).Style.NumberFormat.Format = "#,##0.0"; // НК
-                    ws.Column(8).Style.NumberFormat.Format = "#,##0.0"; // % готовности подсистемы
+                        ws.Column(5).Style.NumberFormat.Format = "#,##0.0";
+                        ws.Column(6).Style.NumberFormat.Format = "#,##0.0";
+                        ws.Column(8).Style.NumberFormat.Format = "#,##0.0";
 
-                    ws.SheetView.FreezeRows(1);
-                    ws.Columns(1, 8).AdjustToContents();
+                        ws.SheetView.FreezeRows(1);
+                        ws.Columns(1, 8).AdjustToContents();
+                    }
+                    else
+                    {
+                        ws.SheetView.FreezeRows(1);
+                        ws.Columns(1, 8).AdjustToContents();
+                    }
 
-                    // --- Стадия 4: сохранение ---
+                    // =========================
+                    // Стадия 3: сохранение
+                    // =========================
                     progress.Report(new ReportProgress
                     {
                         Phase = "Сохранение файла...",
@@ -3659,14 +3729,51 @@ namespace SystemsHighlighter
                     });
 
                     string ext = System.IO.Path.GetExtension(sfd.FileName).ToLowerInvariant();
+
                     if (ext == ".xlsx")
                     {
                         wb.SaveAs(sfd.FileName);
+                        return;
                     }
-                    else if (ext == ".pdf")
+
+                    if (ext == ".pdf")
                     {
-                        // Готовим данные для PdfReportBuilder
-                        var headers = new[]
+                        // --- PDF: две страницы (Системы + Подсистемы) ---
+                        // Заголовки жёсткие и точно не пустые. Никаких "headers" / "rows" переименований, чтобы не стрелять себе в ногу.
+
+                        var sysHeadersPdf = new[]
+                        {
+                    "Система",
+                    "Подсистем (всего)",
+                    "Тест-пакеты (всего/принято)",
+                    "Линии (всего/принято)",
+                    "Средняя готовность по сварке, % (взвеш.)",
+                    "Средняя готовность по НК, % (взвеш.)",
+                    "% готовности системы"
+                };
+
+                        var sysRowsPdf = new List<string[]>();
+                        foreach (var sys in systemsRows)
+                        {
+                            token.ThrowIfCancellationRequested();
+
+                            sysRowsPdf.Add(new[]
+                            {
+                        sys.System ?? "",
+                        sys.SubsystemsCount.ToString(inv),
+                        $"{sys.TotalTp}/{sys.AcceptedTp}",
+                        $"{sys.TotalLines}/{sys.AcceptedLines}",
+                        sys.AvgWeld.ToString("0.0", inv),
+                        sys.AvgNdt.ToString("0.0", inv),
+                        sys.Readiness.ToString("0.0", inv)
+                    });
+                        }
+
+                        // Заглушка, чтобы секция не была пустой даже при нулевых данных
+                        if (sysRowsPdf.Count == 0)
+                            sysRowsPdf.Add(new[] { "Нет данных по системам", "", "", "", "", "", "" });
+
+                        var subHeadersPdf = new[]
                         {
                     "Система",
                     "Подсистема",
@@ -3674,61 +3781,44 @@ namespace SystemsHighlighter
                     "Тест-пакеты (всего/принято)",
                     "Средняя готовность по сварке, %",
                     "Средняя готовность по НК, %",
-                    "Кол-во линий в подсистеме (всего/принято)",
+                    "Кол-во линий (всего/принято)",
                     "% готовности подсистемы"
                 };
 
-                        var rows = new List<string[]>();
-
-                        foreach (var s in flat.OrderBy(x => x.SystemName).ThenBy(x => x.SubsystemName))
+                        var subRowsPdf = new List<string[]>();
+                        foreach (var s in subsRows.OrderBy(x => x.SystemDisplay).ThenBy(x => x.Subsystem))
                         {
-                            var (totalLines, acceptedLines, totalTp, acceptedTp) =
-                                ComputeSubsystemStats(s.SystemName, s.SubsystemName);
+                            token.ThrowIfCancellationRequested();
 
-                            string avgWelding = s.AvgWeldingPercent.ToString("0.0", inv);
-                            string avgNdt = s.AvgNdtPercent.ToString("0.0", inv);
-
-                            string linesText = totalLines == 0
+                            string linesText = s.TotalLines == 0
                                 ? NoLinesText
-                                : $"{totalLines}/{acceptedLines}";
+                                : $"{s.TotalLines}/{s.AcceptedLines}";
 
-                            double readinessPercent = 0.0;
-                            if (totalLines > 0)
-                                readinessPercent = 100.0 * acceptedLines / totalLines;
-
-                            string readinessText = readinessPercent.ToString("0.0", inv);
-
-                            // ФОКУС
-                            string sysname = "";
-                            if (s.SystemName.Contains("01-"))
+                            subRowsPdf.Add(new[]
                             {
-                                var parts = s.SubsystemName.Split('-');
-                                sysname = parts.Count() > 1 ? "01-" + parts[1] : s.SystemName;
-
-                                //MessageBox.Show($"Поменял systemName ({s.SystemName}) для подсистемы {s.SubsystemName}");
-                            }
-
-                            rows.Add(new[]
-                            {
-                        sysname != "" ? sysname : s.SystemName,
-                        s.SubsystemName ?? string.Empty,
-                        s.PrioritiesText ?? string.Empty,
-                        $"{totalTp}/{acceptedTp}",
-                        avgWelding,
-                        avgNdt,
+                        s.SystemDisplay ?? "",
+                        s.Subsystem ?? "",
+                        s.Priorities ?? "",
+                        $"{s.TotalTp}/{s.AcceptedTp}",
+                        s.AvgWeld.ToString("0.0", inv),
+                        s.AvgNdt.ToString("0.0", inv),
                         linesText,
-                        readinessText
+                        s.ReadinessPercent.ToString("0.0", inv)
                     });
                         }
 
-                        var pdf = new PdfReportBuilder(
-                            "Отчёт по статусу подсистем" + " " + ProjectName,
-                            DateTime.Now,
-                            headers,
-                            rows);
+                        if (subRowsPdf.Count == 0)
+                            subRowsPdf.Add(new[] { "Нет данных по подсистемам", "", "", "", "", "", "", "" });
 
+                        var pdf = new PdfReportBuilder("Отчёт по статусу подсистем " + ProjectName, DateTime.Now);
+                        pdf.AddTable("Статусы по системам трубопроводов", sysHeadersPdf, sysRowsPdf);
+                        pdf.AddTable("Статусы по подсистемам", subHeadersPdf, subRowsPdf);
                         pdf.GeneratePdf(sfd.FileName);
+                        return;
                     }
+
+                    // если расширение неожиданное
+                    throw new InvalidOperationException("Неподдерживаемый формат файла отчёта: " + ext);
 
                 }, dlg.Token);
 
@@ -3736,7 +3826,6 @@ namespace SystemsHighlighter
                 MessageBox.Show("Отчёт по подсистемам успешно сформирован.", "Готово",
                     MessageBoxButton.OK, MessageBoxImage.Information);
 
-                // Если PDF — сразу пробуем открыть
                 if (System.IO.Path.GetExtension(sfd.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
                 {
                     try
@@ -3767,6 +3856,60 @@ namespace SystemsHighlighter
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
+        private sealed class SystemAgg
+        {
+            public string SystemName { get; set; } = "";
+
+            public int SubsystemsCount { get; set; }
+
+            public int TotalLines { get; set; }
+            public int AcceptedLines { get; set; }
+
+            public int TotalTp { get; set; }
+            public int AcceptedTp { get; set; }
+
+            public double WeldWeightedSum { get; set; }
+            public double NdtWeightedSum { get; set; }
+        }
+
+        private sealed class SystemRow
+        {
+            public string System { get; set; } = "";
+            public int SubsystemsCount { get; set; }
+
+            public int TotalLines { get; set; }
+            public int AcceptedLines { get; set; }
+
+            public int TotalTp { get; set; }
+            public int AcceptedTp { get; set; }
+
+            public double AvgWeld { get; set; }
+            public double AvgNdt { get; set; }
+            public double Readiness { get; set; }
+        }
+
+        private sealed class SubsystemRow
+        {
+            public string SystemDisplay { get; set; } = "";
+            public string Subsystem { get; set; } = "";
+            public string Priorities { get; set; } = "";
+
+            public int TotalTp { get; set; }
+            public int AcceptedTp { get; set; }
+
+            public double AvgWeld { get; set; }
+            public double AvgNdt { get; set; }
+
+            public int TotalLines { get; set; }
+            public int AcceptedLines { get; set; }
+
+            public double ReadinessPercent { get; set; }
+        }
+
+
+        
+
 
 
         // --- Легенда «Статус подсистем»: Подсистема → Линии ---
@@ -5055,38 +5198,75 @@ namespace SystemsHighlighter
 
 
 
+
+
     public class PdfReportBuilder
     {
         private readonly string _title;
         private readonly DateTime _createdAt;
-        private readonly string[] _headers;
-        private readonly List<string[]> _rows;
         private readonly byte[] _logoBytes;
 
-        // нормализованные данные
+        // ===== МУЛЬТИ-СЕКЦИИ =====
+        private readonly List<PdfSection> _sections = new List<PdfSection>();
+
+        // ===== НОРМАЛИЗОВАННЫЕ ДАННЫЕ ДЛЯ ТЕКУЩЕЙ СЕКЦИИ (используются в BuildTable) =====
         private string[] _normHeaders;
         private List<string[]> _normRows;
         private bool[] _numericCols;
         private int _colCount;
         private int _textColsCount;
 
+        // -------------------------
+        // КОНСТРУКТОРЫ (совместимость)
+        // -------------------------
+
+        // Старый режим: одна таблица
         public PdfReportBuilder(string title, DateTime createdAt, string[] headers, List<string[]> rows)
         {
             _title = title ?? "";
             _createdAt = createdAt;
+            _logoBytes = IconLoader.GetIcon("logo.png");
 
-            _headers = headers != null ? headers : new string[0];
-            _rows = rows != null ? rows : new List<string[]>();
+            AddTable(null, headers, rows);
+        }
 
-            // подгружаем логотип (может быть null — это ок)
+        // Новый режим: документ без таблиц, добавляй секции через AddTable
+        public PdfReportBuilder(string title, DateTime createdAt)
+        {
+            _title = title ?? "";
+            _createdAt = createdAt;
             _logoBytes = IconLoader.GetIcon("logo.png");
         }
+
+        /// <summary>
+        /// Добавить таблицу как отдельный раздел (страницу).
+        /// sectionTitle: можно null/"" — тогда будет только общая шапка документа без подзаголовка.
+        /// </summary>
+        public void AddTable(string sectionTitle, string[] headers, List<string[]> rows)
+        {
+            headers = Array.Empty<string>();
+            rows = new List<string[]>();
+
+            // Диагностика: покажет, кто именно пустой
+            if (headers.Length == 0 && (rows.Count == 0 || rows.All(r => r == null || r.Length == 0)))
+                throw new InvalidOperationException(
+                    $"PDF: пустая секция '{sectionTitle ?? "<без названия>"}' (нет заголовков и строк).");
+
+            _sections.Add(new PdfSection
+            {
+                Title = sectionTitle ?? string.Empty,
+                Headers = headers,
+                Rows = rows
+            });
+        }
+
 
         public void GeneratePdf(string filePath)
         {
             QuestPDF.Settings.License = LicenseType.Community;
 
-            PrepareData();
+            //if (_sections.Count == 0)
+            //    throw new InvalidOperationException("Нет секций для PDF. Добавьте хотя бы одну таблицу через AddTable().");
 
             Document.Create(container =>
             {
@@ -5096,9 +5276,48 @@ namespace SystemsHighlighter
                     page.Margin(20);
                     page.DefaultTextStyle(TextStyle.Default.FontSize(9).FontFamily("Arial"));
 
-                    page.Header().Element(c => BuildHeader(c));
-                    page.Content().Element(c => BuildTable(c));
+                    // Общий header документа (один на все страницы)
+                    page.Header().Element(BuildHeader);
 
+                    // Контент: несколько секций, каждая на новой странице (кроме первой)
+                    page.Content().Column(col =>
+                    {
+                        col.Spacing(10);
+
+                        for (int i = 0; i < _sections.Count; i++)
+                        {
+                            var sec = _sections[i];
+
+                            col.Item().Element(c =>
+                            {
+                                // Новый лист для каждой секции начиная со 2й
+                                if (i > 0)
+                                    c.PageBreak();
+
+                                return c;
+                            })
+                            .Column(secCol =>
+                            {
+                                secCol.Spacing(6);
+
+                                // Подзаголовок секции
+                                if (!string.IsNullOrWhiteSpace(sec.Title))
+                                {
+                                    secCol.Item().Text(sec.Title)
+                                          .Style(TextStyle.Default.FontSize(11).SemiBold());
+                                }
+
+                                // Таблица секции
+                                secCol.Item().Element(c =>
+                                {
+                                    PrepareData(sec.Headers, sec.Rows);
+                                    BuildTable(c);
+                                });
+                            });
+                        }
+                    });
+
+                    // Footer общий
                     page.Footer().Height(36).PaddingTop(4).Row(row =>
                     {
                         row.RelativeItem().AlignCenter().AlignMiddle().Text(t =>
@@ -5121,19 +5340,23 @@ namespace SystemsHighlighter
             }).GeneratePdf(filePath);
         }
 
-        // ---------- Подготовка данных ----------
+        // ---------- Подготовка данных (теперь на вход секции) ----------
 
-        private void PrepareData()
+        private void PrepareData(string[] headers, List<string[]> rows)
         {
-            _colCount = Math.Max(_headers.Length, MaxRowLength(_rows));
+            headers = Array.Empty<string>();
+            rows = new List<string[]>();
+
+            _colCount = Math.Max(headers.Length, MaxRowLength(rows));
             if (_colCount == 0)
                 throw new InvalidOperationException("Нет данных для PDF: пустые заголовки и строки.");
 
-            _normHeaders = NormalizeArray(_headers, _colCount);
-            _normRows = new List<string[]>(_rows.Count);
-            for (int i = 0; i < _rows.Count; i++)
+            _normHeaders = NormalizeArray(headers, _colCount);
+            _normRows = new List<string[]>(rows.Count);
+
+            for (int i = 0; i < rows.Count; i++)
             {
-                string[] r = _rows[i] ?? new string[0];
+                string[] r = rows[i] ?? Array.Empty<string>();
                 _normRows.Add(NormalizeArray(r, _colCount));
             }
 
@@ -5185,7 +5408,7 @@ namespace SystemsHighlighter
                     if (LooksLikeNumber(s)) ok++;
                 }
 
-                // считаем колонку числовой, если >= 90% непустых значений парсятся как число
+                // колонка числовая, если >= 90% непустых значений похожи на число
                 numeric[c] = (total > 0) && (ok * 10 >= total * 9);
             }
             return numeric;
@@ -5201,7 +5424,7 @@ namespace SystemsHighlighter
             return false;
         }
 
-        // ---------- Хедер ----------
+        // ---------- Хедер документа ----------
 
         private void BuildHeader(IContainer container)
         {
@@ -5214,7 +5437,7 @@ namespace SystemsHighlighter
                        .Text(_title)
                        .Style(TextStyle.Default.FontSize(13).SemiBold());
 
-                    row.ConstantItem(200)
+                    row.ConstantItem(220)
                        .AlignRight()
                        .Text(string.Format("Создано: {0:dd.MM.yyyy HH:mm}", _createdAt));
                 });
@@ -5237,8 +5460,8 @@ namespace SystemsHighlighter
                     .Background(isTotal ? QuestPDF.Helpers.Colors.Grey.Lighten3 : QuestPDF.Helpers.Colors.White)
                     .Border(0.25f).BorderColor(QuestPDF.Helpers.Colors.Grey.Lighten4)
                     .MinHeight(12)
-                    .AlignMiddle() 
-                    .AlignCenter(); 
+                    .AlignMiddle()
+                    .AlignCenter();
         }
 
         private void BuildTable(IContainer container)
@@ -5247,7 +5470,6 @@ namespace SystemsHighlighter
 
             container.Table(table =>
             {
-                // колонки
                 table.ColumnsDefinition(cols =>
                 {
                     for (int i = 0; i < colCount; i++)
@@ -5257,7 +5479,6 @@ namespace SystemsHighlighter
                     }
                 });
 
-                // шапка — один контент на ячейку
                 table.Header(header =>
                 {
                     for (int i = 0; i < colCount; i++)
@@ -5268,10 +5489,10 @@ namespace SystemsHighlighter
                     }
                 });
 
-                // тело
                 for (int r = 0; r < _normRows.Count; r++)
                 {
                     string[] row = _normRows[r];
+
                     bool isTotal = row.Length > 0 &&
                                    string.Equals((row[0] ?? "").Trim(), "ИТОГО:", StringComparison.OrdinalIgnoreCase);
 
@@ -5282,32 +5503,31 @@ namespace SystemsHighlighter
 
                         table.Cell()
                              .ColumnSpan((uint)_textColsCount)
-                             .Element(delegate (IContainer e) { return BodyCellBase(e, true); })
-                             .Text(row[0].Length > 0 ? row[0] : "ИТОГО:");
+                             .Element(e => BodyCellBase(e, true))
+                             .Text(!string.IsNullOrWhiteSpace(row[0]) ? row[0] : "ИТОГО:");
 
                         for (int c = firstNumericIndex; c < colCount; c++)
                         {
                             table.Cell()
-                                 .Element(delegate (IContainer e)
+                                 .Element(e =>
                                  {
-                                     IContainer t = BodyCellBase(e, true);
-                                     if (_numericCols[c]) t = t.AlignRight();
+                                     var t = BodyCellBase(e, true);
+                                     // если захочешь: t = _numericCols[c] ? t.AlignRight() : t;
                                      return t;
                                  })
-                                 .Text(row[c]);
+                                 .Text(row[c] ?? "");
                         }
                     }
                     else
                     {
                         for (int c = 0; c < colCount; c++)
                         {
-                            string cellText = row[c];
+                            string cellText = row[c] ?? "";
 
                             table.Cell()
-                                 .Element(delegate (IContainer e)
+                                 .Element(e =>
                                  {
-                                     IContainer t = BodyCellBase(e, isTotal);
-                                     //if (_numericCols[c]) t = t.AlignRight();
+                                     var t = BodyCellBase(e, isTotal);
                                      return t;
                                  })
                                  .Text(cellText);
@@ -5323,12 +5543,22 @@ namespace SystemsHighlighter
                 if (_numericCols[i]) return i;
             return -1;
         }
+
+        // ---------- Внутренности ----------
+
+        private sealed class PdfSection
+        {
+            public string Title { get; set; } = "";
+            public string[] Headers { get; set; } = Array.Empty<string>();
+            public List<string[]> Rows { get; set; } = new List<string[]>();
+        }
     }
 
     public static class SubsystemsPdfReportHelper
     {
         /// <summary>
-        /// Генерирует PDF-отчёт по подсистемам на основе mapper'а и статусов по линиям.
+        /// Генерирует PDF-отчёт по подсистемам (одна таблица).
+        /// Совместимо со старым PdfReportBuilder(title, createdAt, headers, rows).
         /// </summary>
         public static void GenerateSubsystemsPdfReport(
             SubsystemsStatusMapper mapper,
@@ -5342,23 +5572,20 @@ namespace SystemsHighlighter
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("Путь к PDF не задан.", nameof(filePath));
 
-            // 1. Агрегируем данные по подсистемам
             var subsystemsData = mapper.BuildSubsystemStatuses(lineStatuses);
 
-            // 2. Готовим заголовки таблицы
             var headers = new[]
             {
-                "Система",
-                "Подсистема",
-                "Приоритеты",
-                "Тест-пакеты",
-                "Средняя готовность по сварке, %",
-                "Средняя готовность по НК, %",
-                "Испытания завершены, % строк с \"Да\"",
-                "Кол-во элементов"
-            };
+            "Система",
+            "Подсистема",
+            "Приоритеты",
+            "Тест-пакеты",
+            "Средняя готовность по сварке, %",
+            "Средняя готовность по НК, %",
+            "Испытания завершены, % строк с \"Да\"",
+            "Кол-во элементов"
+        };
 
-            // 3. Формируем строки
             var rows = new List<string[]>();
 
             foreach (var sysKv in subsystemsData.OrderBy(k => k.Key))
@@ -5377,26 +5604,49 @@ namespace SystemsHighlighter
 
                     rows.Add(new[]
                     {
-                        s.SystemName ?? systemName ?? string.Empty,
-                        s.SubsystemName ?? subsKv.Key ?? string.Empty,
-                        s.PrioritiesText ?? string.Empty,
-                        s.TestPackagesText ?? string.Empty,
-                        avgWelding,
-                        avgNdt,
-                        testsCompleted,
-                        elementsCount
-                    });
+                    s.SystemName ?? systemName ?? string.Empty,
+                    s.SubsystemName ?? subsKv.Key ?? string.Empty,
+                    s.PrioritiesText ?? string.Empty,
+                    s.TestPackagesText ?? string.Empty,
+                    avgWelding,
+                    avgNdt,
+                    testsCompleted,
+                    elementsCount
+                });
                 }
             }
 
-            // 4. Создаём и генерим PDF
             var title = "Статус подсистем по тест-пакетам";
             var createdAt = DateTime.Now;
 
             var builder = new PdfReportBuilder(title, createdAt, headers, rows);
             builder.GeneratePdf(filePath);
         }
+
+        /// <summary>
+        /// Пример: один PDF, две страницы:
+        /// 1) Системы
+        /// 2) Подсистемы
+        /// (тебе останется только подготовить sysHeaders/sysRows)
+        /// </summary>
+        public static void GenerateSystemsAndSubsystemsPdfReport(
+            string title,
+            string[] sysHeaders, List<string[]> sysRows,
+            string[] subHeaders, List<string[]> subRows,
+            string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentException("Путь к PDF не задан.", nameof(filePath));
+
+            var builder = new PdfReportBuilder(title, DateTime.Now);
+
+            builder.AddTable("Статусы по системам трубопроводов", sysHeaders, sysRows);
+            builder.AddTable("Статусы по подсистемам", subHeaders, subRows);
+
+            builder.GeneratePdf(filePath);
+        }
     }
+
 
 
 
