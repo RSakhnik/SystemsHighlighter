@@ -3736,86 +3736,92 @@ namespace SystemsHighlighter
                         return;
                     }
 
-                    if (ext == ".pdf")
+                    else if (ext == ".pdf")
                     {
-                        // --- PDF: две страницы (Системы + Подсистемы) ---
-                        // Заголовки жёсткие и точно не пустые. Никаких "headers" / "rows" переименований, чтобы не стрелять себе в ногу.
-
-                        var sysHeadersPdf = new[]
+                        // ====== 1) СЕКЦИЯ "СИСТЕМЫ" ======
+                        string[] sysHeadersPdf = new[]
                         {
-                    "Система",
-                    "Подсистем (всего)",
-                    "Тест-пакеты (всего/принято)",
-                    "Линии (всего/принято)",
-                    "Средняя готовность по сварке, % (взвеш.)",
-                    "Средняя готовность по НК, % (взвеш.)",
-                    "% готовности системы"
-                };
+                            "Система",
+                            "Подсистем (всего)",
+                            "Тест-пакеты (всего/принято)",
+                            "Линии (всего/принято)",
+                            "Средняя готовность по сварке, % (взвеш.)",
+                            "Средняя готовность по НК, % (взвеш.)",
+                            "% готовности системы"
+                        };
 
                         var sysRowsPdf = new List<string[]>();
+
+                        // systemsRows — твой список по системам (посчитанный выше)
                         foreach (var sys in systemsRows)
                         {
-                            token.ThrowIfCancellationRequested();
-
                             sysRowsPdf.Add(new[]
                             {
-                        sys.System ?? "",
-                        sys.SubsystemsCount.ToString(inv),
-                        $"{sys.TotalTp}/{sys.AcceptedTp}",
-                        $"{sys.TotalLines}/{sys.AcceptedLines}",
-                        sys.AvgWeld.ToString("0.0", inv),
-                        sys.AvgNdt.ToString("0.0", inv),
-                        sys.Readiness.ToString("0.0", inv)
-                    });
+                                sys.System ?? "",
+                                sys.SubsystemsCount.ToString(inv),
+                                $"{sys.TotalTp}/{sys.AcceptedTp}",
+                                $"{sys.TotalLines}/{sys.AcceptedLines}",
+                                sys.AvgWeld.ToString("0.0", inv),
+                                sys.AvgNdt.ToString("0.0", inv),
+                                sys.Readiness.ToString("0.0", inv)
+                            });
                         }
 
-                        // Заглушка, чтобы секция не была пустой даже при нулевых данных
+                        // Заглушка, чтобы секция не была пустой
                         if (sysRowsPdf.Count == 0)
                             sysRowsPdf.Add(new[] { "Нет данных по системам", "", "", "", "", "", "" });
 
-                        var subHeadersPdf = new[]
+                        // ====== 2) СЕКЦИЯ "ПОДСИСТЕМЫ" ======
+                        string[] subHeadersPdf = new[]
                         {
-                    "Система",
-                    "Подсистема",
-                    "Приоритеты",
-                    "Тест-пакеты (всего/принято)",
-                    "Средняя готовность по сварке, %",
-                    "Средняя готовность по НК, %",
-                    "Кол-во линий (всего/принято)",
-                    "% готовности подсистемы"
-                };
+                            "Система",
+                            "Подсистема",
+                            "Приоритеты",
+                            "Тест-пакеты (всего/принято)",
+                            "Средняя готовность по сварке, %",
+                            "Средняя готовность по НК, %",
+                            "Кол-во линий (всего/принято)",
+                            "% готовности подсистемы"
+                        };
 
                         var subRowsPdf = new List<string[]>();
+
                         foreach (var s in subsRows.OrderBy(x => x.SystemDisplay).ThenBy(x => x.Subsystem))
                         {
-                            token.ThrowIfCancellationRequested();
-
                             string linesText = s.TotalLines == 0
                                 ? NoLinesText
                                 : $"{s.TotalLines}/{s.AcceptedLines}";
 
                             subRowsPdf.Add(new[]
                             {
-                        s.SystemDisplay ?? "",
-                        s.Subsystem ?? "",
-                        s.Priorities ?? "",
-                        $"{s.TotalTp}/{s.AcceptedTp}",
-                        s.AvgWeld.ToString("0.0", inv),
-                        s.AvgNdt.ToString("0.0", inv),
-                        linesText,
-                        s.ReadinessPercent.ToString("0.0", inv)
-                    });
+                                s.SystemDisplay ?? "",
+                                s.Subsystem ?? "",
+                                s.Priorities ?? "",
+                                $"{s.TotalTp}/{s.AcceptedTp}",
+                                s.AvgWeld.ToString("0.0", inv),
+                                s.AvgNdt.ToString("0.0", inv),
+                                linesText,
+                                s.ReadinessPercent.ToString("0.0", inv)
+                            });
                         }
 
                         if (subRowsPdf.Count == 0)
                             subRowsPdf.Add(new[] { "Нет данных по подсистемам", "", "", "", "", "", "", "" });
 
+                        // ====== 3) СБОРКА PDF (две страницы) ======
                         var pdf = new PdfReportBuilder("Отчёт по статусу подсистем " + ProjectName, DateTime.Now);
+
+                        // На всякий случай, чтобы ты видел в Debug Output реальные значения:
+                        System.Diagnostics.Debug.WriteLine($"PDF SYS: headers={sysHeadersPdf.Length}, rows={sysRowsPdf.Count}");
+                        System.Diagnostics.Debug.WriteLine($"PDF SUB: headers={subHeadersPdf.Length}, rows={subRowsPdf.Count}");
+
                         pdf.AddTable("Статусы по системам трубопроводов", sysHeadersPdf, sysRowsPdf);
                         pdf.AddTable("Статусы по подсистемам", subHeadersPdf, subRowsPdf);
+
                         pdf.GeneratePdf(sfd.FileName);
                         return;
                     }
+
 
                     // если расширение неожиданное
                     throw new InvalidOperationException("Неподдерживаемый формат файла отчёта: " + ext);
@@ -5206,19 +5212,14 @@ namespace SystemsHighlighter
         private readonly DateTime _createdAt;
         private readonly byte[] _logoBytes;
 
-        // ===== МУЛЬТИ-СЕКЦИИ =====
         private readonly List<PdfSection> _sections = new List<PdfSection>();
 
-        // ===== НОРМАЛИЗОВАННЫЕ ДАННЫЕ ДЛЯ ТЕКУЩЕЙ СЕКЦИИ (используются в BuildTable) =====
-        private string[] _normHeaders;
-        private List<string[]> _normRows;
-        private bool[] _numericCols;
+        // нормализованные данные текущей секции
+        private string[] _normHeaders = Array.Empty<string>();
+        private List<string[]> _normRows = new List<string[]>();
+        private bool[] _numericCols = Array.Empty<bool>();
         private int _colCount;
         private int _textColsCount;
-
-        // -------------------------
-        // КОНСТРУКТОРЫ (совместимость)
-        // -------------------------
 
         // Старый режим: одна таблица
         public PdfReportBuilder(string title, DateTime createdAt, string[] headers, List<string[]> rows)
@@ -5230,7 +5231,7 @@ namespace SystemsHighlighter
             AddTable(null, headers, rows);
         }
 
-        // Новый режим: документ без таблиц, добавляй секции через AddTable
+        // Новый режим: несколько секций
         public PdfReportBuilder(string title, DateTime createdAt)
         {
             _title = title ?? "";
@@ -5238,17 +5239,11 @@ namespace SystemsHighlighter
             _logoBytes = IconLoader.GetIcon("logo.png");
         }
 
-        /// <summary>
-        /// Добавить таблицу как отдельный раздел (страницу).
-        /// sectionTitle: можно null/"" — тогда будет только общая шапка документа без подзаголовка.
-        /// </summary>
         public void AddTable(string sectionTitle, string[] headers, List<string[]> rows)
         {
-            headers = Array.Empty<string>();
-            rows = new List<string[]>();
+            bool hasAnyRowCells = rows.Count > 0 && rows.Any(r => r != null && r.Length > 0);
 
-            // Диагностика: покажет, кто именно пустой
-            if (headers.Length == 0 && (rows.Count == 0 || rows.All(r => r == null || r.Length == 0)))
+            if (headers.Length == 0 && !hasAnyRowCells)
                 throw new InvalidOperationException(
                     $"PDF: пустая секция '{sectionTitle ?? "<без названия>"}' (нет заголовков и строк).");
 
@@ -5260,13 +5255,12 @@ namespace SystemsHighlighter
             });
         }
 
-
         public void GeneratePdf(string filePath)
         {
             QuestPDF.Settings.License = LicenseType.Community;
 
-            //if (_sections.Count == 0)
-            //    throw new InvalidOperationException("Нет секций для PDF. Добавьте хотя бы одну таблицу через AddTable().");
+            if (_sections.Count == 0)
+                throw new InvalidOperationException("Нет секций для PDF. Добавьте хотя бы одну таблицу через AddTable().");
 
             Document.Create(container =>
             {
@@ -5276,10 +5270,8 @@ namespace SystemsHighlighter
                     page.Margin(20);
                     page.DefaultTextStyle(TextStyle.Default.FontSize(9).FontFamily("Arial"));
 
-                    // Общий header документа (один на все страницы)
                     page.Header().Element(BuildHeader);
 
-                    // Контент: несколько секций, каждая на новой странице (кроме первой)
                     page.Content().Column(col =>
                     {
                         col.Spacing(10);
@@ -5288,26 +5280,22 @@ namespace SystemsHighlighter
                         {
                             var sec = _sections[i];
 
-                            col.Item().Element(c =>
-                            {
-                                // Новый лист для каждой секции начиная со 2й
-                                if (i > 0)
-                                    c.PageBreak();
+                            // Разрыв страницы перед секцией (начиная со 2-й)
+                            if (i > 0)
+                                col.Item().PageBreak();
 
-                                return c;
-                            })
-                            .Column(secCol =>
+                            // Контент секции
+                            col.Item().Column(secCol =>
                             {
                                 secCol.Spacing(6);
 
-                                // Подзаголовок секции
                                 if (!string.IsNullOrWhiteSpace(sec.Title))
                                 {
-                                    secCol.Item().Text(sec.Title)
+                                    secCol.Item()
+                                          .Text(sec.Title)
                                           .Style(TextStyle.Default.FontSize(11).SemiBold());
                                 }
 
-                                // Таблица секции
                                 secCol.Item().Element(c =>
                                 {
                                     PrepareData(sec.Headers, sec.Rows);
@@ -5317,7 +5305,7 @@ namespace SystemsHighlighter
                         }
                     });
 
-                    // Footer общий
+
                     page.Footer().Height(36).PaddingTop(4).Row(row =>
                     {
                         row.RelativeItem().AlignCenter().AlignMiddle().Text(t =>
@@ -5340,20 +5328,16 @@ namespace SystemsHighlighter
             }).GeneratePdf(filePath);
         }
 
-        // ---------- Подготовка данных (теперь на вход секции) ----------
-
+        // ---------- Подготовка данных ----------
         private void PrepareData(string[] headers, List<string[]> rows)
         {
-            headers = Array.Empty<string>();
-            rows = new List<string[]>();
-
             _colCount = Math.Max(headers.Length, MaxRowLength(rows));
             if (_colCount == 0)
                 throw new InvalidOperationException("Нет данных для PDF: пустые заголовки и строки.");
 
             _normHeaders = NormalizeArray(headers, _colCount);
-            _normRows = new List<string[]>(rows.Count);
 
+            _normRows = new List<string[]>(rows.Count);
             for (int i = 0; i < rows.Count; i++)
             {
                 string[] r = rows[i] ?? Array.Empty<string>();
@@ -5361,6 +5345,7 @@ namespace SystemsHighlighter
             }
 
             _numericCols = DetectNumericColumns(_normRows, _colCount);
+
             _textColsCount = 0;
             for (int i = 0; i < _colCount; i++)
                 if (!_numericCols[i]) _textColsCount++;
@@ -5372,7 +5357,7 @@ namespace SystemsHighlighter
             if (list == null) return 0;
             for (int i = 0; i < list.Count; i++)
             {
-                string[] arr = list[i];
+                var arr = list[i];
                 int len = arr != null ? arr.Length : 0;
                 if (len > max) max = len;
             }
@@ -5381,7 +5366,7 @@ namespace SystemsHighlighter
 
         private string[] NormalizeArray(string[] source, int length)
         {
-            string[] result = new string[length];
+            var result = new string[length];
             int copy = source != null ? Math.Min(source.Length, length) : 0;
             if (copy > 0) Array.Copy(source, result, copy);
             for (int i = 0; i < length; i++)
@@ -5391,7 +5376,7 @@ namespace SystemsHighlighter
 
         private bool[] DetectNumericColumns(List<string[]> rows, int colCount)
         {
-            bool[] numeric = new bool[colCount];
+            var numeric = new bool[colCount];
             for (int c = 0; c < colCount; c++)
             {
                 int total = 0;
@@ -5399,16 +5384,16 @@ namespace SystemsHighlighter
 
                 for (int r = 0; r < rows.Count; r++)
                 {
-                    string[] row = rows[r];
+                    var row = rows[r];
                     if (row == null || c >= row.Length) continue;
-                    string s = (row[c] ?? "").Trim();
+
+                    var s = (row[c] ?? "").Trim();
                     if (s.Length == 0) continue;
 
                     total++;
                     if (LooksLikeNumber(s)) ok++;
                 }
 
-                // колонка числовая, если >= 90% непустых значений похожи на число
                 numeric[c] = (total > 0) && (ok * 10 >= total * 9);
             }
             return numeric;
@@ -5416,16 +5401,14 @@ namespace SystemsHighlighter
 
         private bool LooksLikeNumber(string s)
         {
-            double d;
-            if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out d))
+            if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
                 return true;
-            if (double.TryParse(s, NumberStyles.Any, new CultureInfo("ru-RU"), out d))
+            if (double.TryParse(s, NumberStyles.Any, new CultureInfo("ru-RU"), out _))
                 return true;
             return false;
         }
 
-        // ---------- Хедер документа ----------
-
+        // ---------- Хедер ----------
         private void BuildHeader(IContainer container)
         {
             container.Column(col =>
@@ -5445,7 +5428,6 @@ namespace SystemsHighlighter
         }
 
         // ---------- Таблица ----------
-
         private IContainer HeaderCellBase(IContainer c)
         {
             return c.PaddingVertical(0).PaddingHorizontal(0)
@@ -5491,60 +5473,19 @@ namespace SystemsHighlighter
 
                 for (int r = 0; r < _normRows.Count; r++)
                 {
-                    string[] row = _normRows[r];
-
+                    var row = _normRows[r];
                     bool isTotal = row.Length > 0 &&
                                    string.Equals((row[0] ?? "").Trim(), "ИТОГО:", StringComparison.OrdinalIgnoreCase);
 
-                    if (isTotal && _textColsCount > 1)
+                    for (int c = 0; c < colCount; c++)
                     {
-                        int firstNumericIndex = FirstNumericIndex();
-                        if (firstNumericIndex < 0) firstNumericIndex = colCount;
-
                         table.Cell()
-                             .ColumnSpan((uint)_textColsCount)
-                             .Element(e => BodyCellBase(e, true))
-                             .Text(!string.IsNullOrWhiteSpace(row[0]) ? row[0] : "ИТОГО:");
-
-                        for (int c = firstNumericIndex; c < colCount; c++)
-                        {
-                            table.Cell()
-                                 .Element(e =>
-                                 {
-                                     var t = BodyCellBase(e, true);
-                                     // если захочешь: t = _numericCols[c] ? t.AlignRight() : t;
-                                     return t;
-                                 })
-                                 .Text(row[c] ?? "");
-                        }
-                    }
-                    else
-                    {
-                        for (int c = 0; c < colCount; c++)
-                        {
-                            string cellText = row[c] ?? "";
-
-                            table.Cell()
-                                 .Element(e =>
-                                 {
-                                     var t = BodyCellBase(e, isTotal);
-                                     return t;
-                                 })
-                                 .Text(cellText);
-                        }
+                             .Element(e => BodyCellBase(e, isTotal))
+                             .Text(row[c] ?? "");
                     }
                 }
             });
         }
-
-        private int FirstNumericIndex()
-        {
-            for (int i = 0; i < _numericCols.Length; i++)
-                if (_numericCols[i]) return i;
-            return -1;
-        }
-
-        // ---------- Внутренности ----------
 
         private sealed class PdfSection
         {
@@ -5553,6 +5494,7 @@ namespace SystemsHighlighter
             public List<string[]> Rows { get; set; } = new List<string[]>();
         }
     }
+
 
     public static class SubsystemsPdfReportHelper
     {
